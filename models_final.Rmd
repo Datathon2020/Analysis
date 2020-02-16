@@ -1,0 +1,229 @@
+---
+title: "Modeling GIS data"
+author: "Collin Kauss, Tony Lee, Vetrie Senthilkumar, Gajan Kumar"
+date: "2/15/2020"
+output: html_document
+---
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+library('MASS')
+library('dplyr')
+library('ggplot2')
+library('glmnet')
+library('car')
+```
+
+```{r}
+# combined.csv should be the output of data_cleansing.py, which combines sales data from a given industry with geographic and demographic data by zipcode.
+gis = read.csv("combined.csv")
+```
+
+```{r}
+# Remove categorical data
+gis = subset(gis, select=-c(X,Zipcode,SalesId,SalesIdVal,Sales,Zip,Bracket6))
+
+# AvgSales scaled back, interpret single unit as $100,000 in sales for the 
+gis$AvgSales = gis$AvgSales / 100000
+
+sapply(gis, class)
+```
+
+
+OLS model with all predictors:
+
+```{r}
+model1 = lm(AvgSales ~., data = gis)
+summary(model1)
+```
+
+A VIF > 5 indicates that the predictor may be correlated to others.
+
+```{r}
+vif(model1)
+```
+
+
+#### BIC Forward Selection
+
+```{r}
+y = gis$AvgSales
+
+# Partition data for cross validation
+set.seed(3)
+train_rows = sample(1:nrow(gis), .8*nrow(gis))
+x.train = gis[train_rows, ]
+x.test = gis[-train_rows, ]
+
+y.train = y[train_rows]
+y.test = y[-train_rows]
+
+int_model = lm(AvgSales~1, data = x.train)
+full_model = lm(AvgSales~., data = x.train)
+
+bic_model = step(int_model, scope = list(upper = full_model, lower = int_model), direction = "forward", k=log(nrow(gis)), trace=FALSE)
+```
+
+```{r}
+summary(bic_model)
+```
+
+```{r}
+bic_yhat = predict(bic_model, x.test)
+bic_mse = mean((y.test - bic_yhat)^2)
+bic_mse
+```
+
+
+#### AIC Forward Selection
+
+```{r}
+aic_model = step(int_model, scope = list(upper = full_model, lower = int_model), direction = "forward", k=2, trace=FALSE)
+```
+
+```{r}
+summary(aic_model)
+```
+
+```{r}
+aic_yhat = predict(aic_model, x.test)
+aic_mse = mean((y.test - aic_yhat)^2)
+aic_mse
+```
+
+
+#### RIDGE
+
+```{r}
+X = model.matrix(lm(AvgSales ~ . -1, data = gis))
+
+# Partition data for cross validation
+set.seed(3)
+train_rows = sample(1:nrow(X), .8*nrow(X))
+x.train = X[train_rows, ]
+x.test = X[-train_rows, ]
+
+y.train = y[train_rows]
+y.test = y[-train_rows]
+
+# Ridge regression using many different lambdas
+ridge_fits = cv.glmnet(x.train, y.train, family="gaussian", alpha = 0)
+
+plot(ridge_fits)
+```
+
+```{r}
+ridge_lambda = ridge_fits$lambda.1se
+ridge_lambda
+```
+
+```{r}
+ridge = glmnet(x.train, y.train, family="gaussian", alpha=0)
+plot(ridge, xvar="lambda")
+```
+
+```{r}
+ridge_model = glmnet(x.train, y.train, family="gaussian", alpha=0, lambda = ridge_lambda)
+coef(ridge_model)
+```
+
+```{r}
+ridge_yhat = predict(ridge_fits, s=ridge_lambda, newx=x.test)
+ridge_mse = mean((y.test - yhat)^2)
+ridge_mse
+```
+
+
+
+#### LASSO
+
+```{r}
+# Lasso regression using many different lambdas
+lasso_fits = cv.glmnet(x.train, y.train, family="gaussian", alpha = 1)
+
+plot(lasso_fits)
+```
+
+```{r}
+lasso_lambda = lasso_fits$lambda.1se
+lasso_lambda
+```
+
+```{r}
+lasso = glmnet(x.train, y.train, family="gaussian", alpha=1)
+plot(lasso, xvar="lambda")
+```
+
+```{r}
+lasso_model = glmnet(x.train, y.train, family="gaussian", alpha=1, lambda = lasso_lambda)
+coef(lasso_model)
+```
+
+```{r}
+lasso_yhat = predict(lasso_fits, s=lasso_lambda, newx=x.test)
+lasso_mse = mean((y.test - yhat)^2)
+lasso_mse
+```
+
+
+#### ELASTIC NET
+
+```{r}
+elastic_fits = cv.glmnet(x.train, y.train, family="gaussian", alpha = 0.5)
+
+plot(elastic_fits)
+```
+
+```{r}
+elastic_lambda = elastic_fits$lambda.1se
+elastic_lambda
+```
+
+```{r}
+elastic = glmnet(x.train, y.train, family="gaussian", alpha=0.5)
+plot(elastic, xvar="lambda")
+```
+
+```{r}
+elastic_model = glmnet(x.train, y.train, family="gaussian", alpha=0, lambda = elastic_lambda)
+coef(elastic_model)
+```
+
+```{r}
+elastic_yhat = predict(elastic_fits, s=elastic_lambda, newx=x.test)
+elastic_mse = mean((y.test - yhat)^2)
+elastic_mse
+```
+
+After running the above models on multiple industries, we found that the bic forward selection model generally had the lowest cross validated MSE.  We will choose this model (trained on the full dataset), as our final model.
+
+
+```{r}
+int_model = lm(AvgSales~1, data = gis)
+full_model = lm(AvgSales~., data = gis)
+
+final_model = step(int_model, scope = list(upper = full_model, lower = int_model), direction = "forward", k=log(nrow(gis)), trace=FALSE)
+summary(final_model)
+```
+
+```{r}
+plot(final_model)
+```
+
+```{r}
+yhat = predict(bic_model, gis)
+mse = mean((y - yhat)^2)
+mse
+```
+
+
+```{r}
+temp = read.csv("combined.csv")
+zipcodes = temp$Zipcode
+temp_df = data.frame(zipcodes, yhat)
+sorted_zips = temp_df[order(-yhat),]$zipcodes
+head(sorted_zips, n=20)
+```
+
+The sorted_zip list now contains a prioritized list of zip codes to market to based on the given industry.
+
+
