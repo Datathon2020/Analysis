@@ -1,0 +1,98 @@
+---
+title: "Clustering"
+author: "Vetrie Senthilkumar"
+date: "February 15, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggmap)
+```
+
+
+```{r}
+#Prepare data for cluster analysis 
+set.seed(1002)
+
+data = read.csv("combined.csv")
+data = select(data, -c("X", "SalesId", "SalesIdVal", "Zip", "Sales"))
+
+train = data
+
+# Standardize columns 
+for (i in 2:length(train)) {
+  train[i] = scale(train[i])
+}
+
+train$AvgSales = train$AvgSales * 3
+
+```
+
+
+```{r}
+# Try different k-means models and validate using distance 
+dist_ratios = rep(0, length(5:25))
+idx = 1
+
+for (k in 5:25) {
+  kmeans_mod = kmeans(train[, 2:length(train)], k)
+  dist_ratios[idx] = kmeans_mod$tot.withinss / kmeans_mod$totss
+  idx = idx + 1
+}
+
+
+# Make a scree plot with to pinpoint ideal number of clusters 
+plot(dist_ratios, type = "b", xlab = "K", ylab = "Ratio of Distances")
+```
+
+
+```{r}
+# Train final model
+final_mod = kmeans(train[, 2:length(train)], 9)
+data$group = final_mod$cluster
+```
+
+
+```{r}
+# Load in zipcode data
+zipcode = read.csv('zipcodes.csv')
+data = dplyr::rename(data, ZIP = Zipcode)
+zipcode = dplyr::rename(zipcode, ZIP = "ï..ZIP")
+data_merged = merge(data, zipcode, by = 'ZIP')
+
+```
+
+```{r}
+# Data visualizations based on cluster analysis 
+us = c(left = -125, bottom = 25.75, right = -67, top = 49)
+
+plot = get_stamenmap(us, zoom = 5, maptype = "toner-lite", color = 'color') %>%
+ggmap(legend = 'topleft') + geom_point(aes(x = LNG, y = LAT, alpha = 0.25, color = as.factor(group)), data = data_merged, size = 0.05) + facet_wrap(~group) 
+```
+
+```{r}
+
+agg_bracket1 = aggregate(data[, c("AvgSales", "Bracket1")], list(data$group), mean)
+agg_married = aggregate(data[, c("AvgSales", "Married")], list(data$group), mean)
+agg_ss = aggregate(data[, c("AvgSales", "SocialSecurity")], list(data$group), mean)
+
+ggplot(data = agg_bracket1) + geom_point(aes(x = Bracket1, y = agg_bracket1$AvgSales, color = as.factor(agg_bracket1$Group.1))) + ggtitle('AvgSales vs Bracket1') +
+ylab('Average Sales')
+ggplot(data = agg_married) + geom_point(aes(x = Married, y = agg_married$AvgSales, color = as.factor(agg_married$Group.1))) + ggtitle('AvgSales vs Married') +
+ylab('Average Sales')
+ggplot(data = agg_ss) + geom_point(aes(x = SocialSecurity, y = agg_ss$AvgSales, color = as.factor(agg_ss$Group.1))) + ggtitle('AvgSales vs Social Security') +
+ylab('Average Sales')
+```
+
+
+
+
+
+
+
